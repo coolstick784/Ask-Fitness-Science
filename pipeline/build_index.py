@@ -144,7 +144,7 @@ def main():
         "chunks": len(all_chunks),
         "target_words": args.target_words,
         "overlap": args.overlap,
-        "one_chunk_per_article": not args.windowed_chunks,
+        "one_chunk_per_article": True,
         "corpus": str(corpus_path),
         "chunks_path": str(chunks_path),
         "index_path": str(index_path),
