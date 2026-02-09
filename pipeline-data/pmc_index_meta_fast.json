@@ -1,0 +1,11 @@
+{
+  "model": "all-MiniLM-L6-v2",
+  "dim": 384,
+  "chunks": 87273,
+  "target_words": 320,
+  "overlap": 80,
+  "one_chunk_per_article": true,
+  "corpus": "pmc_corpus.jsonl",
+  "chunks_path": "pmc_chunks_fast.jsonl",
+  "index_path": "pmc_faiss_fast.index"
+}
