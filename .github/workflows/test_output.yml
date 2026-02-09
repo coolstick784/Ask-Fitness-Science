@@ -4,16 +4,24 @@ on:
   push:
     branches: ["main", "master"]
   pull_request:
+    branches: ["main", "master"]
   workflow_dispatch:
-
 
 jobs:
   run-test-output:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repo
+      - name: Checkout repo (with LFS)
         uses: actions/checkout@v4
+        with:
+          lfs: true
+          fetch-depth: 0
+
+      - name: Ensure Git LFS files are present
+        run: |
+          git lfs version
+          git lfs pull
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -24,9 +32,31 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+          pip install -r requirements.txt
+
+      - name: Debug GROQ_API_KEY presence (safe)
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: |
+          if [ -z "$GROQ_API_KEY" ]; then
+            echo "GROQ_API_KEY is EMPTY"
+          else
+            echo "GROQ_API_KEY is SET"
+          fi
+
 
       - name: Run test-output script
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
         run: |
           python test-output/test_output.py
+
+      - name: Upload test artifacts (optional)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-output
+          path: |
+            test-output/test_output.json
+            test-output/test_output.log
+          if-no-files-found: ignore

@@ -22,7 +22,7 @@ from app import (
     SPEED_PROFILES,
     SUMMARY_TOKEN_LEVELS,
     TOKEN_LEVELS,
-    call_ollama,
+    call_groq,
     canonical_pubmed_url,
     convert_study_number_citations_to_links,
     embed,
