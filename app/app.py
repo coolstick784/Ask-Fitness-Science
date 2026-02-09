@@ -58,8 +58,8 @@ SPEED_PROFILES = {
         "index_meta_path": str(DATA_DIR / "pmc_index_meta.json"),
     },
     "Quality": {
-        "model": "llama-3.3-70b-versatile",
-        "embed_model": "BAAI/bge-large-en-v1.5",
+        "model": "groq/compound",
+        "embed_model": "all-MiniLM-L6-v2",
         "top_k": 10,
         "num_predict": 512,
         "summary_predict": 256,
@@ -869,6 +869,17 @@ div[role="listbox"] ul li * {
     if not index_path.exists() or not chunks_path.exists():
         st.error("Index or chunks missing for the quality profile. Build the corresponding files first.")
         return
+
+    # One-time warmup so first query does not pay full cold-start costs.
+    if not st.session_state.get("_warmup_done", False):
+        with st.spinner("Warming up retrieval..."):
+            load_index(index_path)
+            load_index_meta(index_meta_path)
+            load_chunks(chunks_path)
+            load_sparse_index(chunks_path)
+            load_embedder(embed_model_name)
+            load_pmid_map(pmid_map_path)
+        st.session_state["_warmup_done"] = True
     
     # Defint the chat history and prompt the user
 
@@ -925,7 +936,7 @@ div[role="listbox"] ul li * {
                         )
                         return
                 # Get the top k1 dense rankings
-                dense_k = 200
+                dense_k = 80
                 scores, idxs = retrieve(q_emb, index, dense_k)
                 dense_ranked: List[Tuple[int, float]] = []
                 for i, s in zip(idxs[0].tolist(), scores[0].tolist()):
@@ -934,7 +945,7 @@ div[role="listbox"] ul li * {
                     dense_ranked.append((int(i), float(s)))
 
                 # Get the top k2 sparse rankings and fuse them with the dense rankings
-                sparse_k = 500
+                sparse_k = 200
                 sparse_ranked = sparse_retrieve(
                     question,
                     term_freqs=sparse_tf,
