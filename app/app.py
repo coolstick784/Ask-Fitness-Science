@@ -309,29 +309,29 @@ def load_sparse_index(
     chunks_path: Path,
 ) -> Tuple[List[Dict[str, int]], List[int], float, Dict[str, float], Dict[str, List[int]]]:
     cache_path = chunks_path.with_suffix(".sparse.pkl")
+    # On Streamlit Cloud, file mtimes can differ from local builds.
+    # If a cache file exists and has the expected keys, trust it.
+    if cache_path.exists():
+        try:
+            with cache_path.open("rb") as f:
+                obj = pickle.load(f)
+            if isinstance(obj, dict) and all(
+                k in obj for k in ("term_freqs", "doc_lens", "avg_dl", "idf", "postings")
+            ):
+                return (
+                    obj["term_freqs"],
+                    obj["doc_lens"],
+                    obj["avg_dl"],
+                    obj["idf"],
+                    obj["postings"],
+                )
+        except Exception:
+            pass
+
     try:
         src_stat = chunks_path.stat()
     except Exception:
         src_stat = None
-    if src_stat and cache_path.exists():
-        try:
-            with cache_path.open("rb") as f:
-                obj = pickle.load(f)
-            if not (
-                isinstance(obj, dict)
-                and int(obj.get("source_size", -1)) == int(src_stat.st_size)
-                and int(obj.get("source_mtime_ns", -1)) == int(src_stat.st_mtime_ns)
-            ):
-                raise ValueError("stale sparse cache")
-            return (
-                obj["term_freqs"],
-                obj["doc_lens"],
-                obj["avg_dl"],
-                obj["idf"],
-                obj["postings"],
-            )
-        except Exception:
-            pass
 
     chunks = load_chunks(chunks_path)
     term_freqs: List[Dict[str, int]] = []
