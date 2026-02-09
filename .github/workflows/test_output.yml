@@ -44,25 +44,6 @@ jobs:
             echo "GROQ_API_KEY is SET"
           fi
 
-      # Optional: sanity-check that your FAISS index isn't an LFS pointer file.
-      # Set INDEX_PATH to your actual index file location in the repo.
-      - name: Debug FAISS index header (safe)
-        env:
-          INDEX_PATH: pmc_faiss.index
-        run: |
-          python - << 'PY'
-          from pathlib import Path
-          p = Path("${INDEX_PATH}")
-          if not p.exists():
-              print(f"[WARN] Index file not found at: {p.resolve()}")
-          else:
-              head = p.read_bytes()[:80]
-              text = head.decode("utf-8", errors="replace")
-              print("[INFO] First 80 bytes:")
-              print(text)
-              if text.startswith("version https://git-lfs.github.com/spec"):
-                  raise SystemExit("[FAIL] Index is still a Git LFS pointer. LFS pull failed.")
-          PY
 
       - name: Run test-output script
         env:

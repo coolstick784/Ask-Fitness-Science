@@ -757,7 +757,7 @@ def normalize_summary_sections(summary_text: str) -> str:
 
 
 def main():
-    st.set_page_config(page_title="Search Open Access Resistance Training Studies", layout="wide")
+    st.set_page_config(page_title="AskFit", page_icon="🏋️", layout="wide")
     # HTML/CSS to make the page look good
     st.markdown(
         """
