@@ -60,7 +60,7 @@ SPEED_PROFILES = {
     },
     "Quality": {
         "model": "groq/compound",
-        "embed_model": "all-MiniLM-L6-v2",
+        "embed_model": "BAAI/bge-base-en-v1.5",
         "top_k": 10,
         "num_predict": 512,
         "summary_predict": 256,
@@ -944,7 +944,7 @@ div[role="listbox"] ul li * {
                         )
                         return
                 # Get the top k1 dense rankings
-                dense_k = 80
+                dense_k = 300
                 scores, idxs = retrieve(q_emb, index, dense_k)
                 dense_ranked: List[Tuple[int, float]] = []
                 for i, s in zip(idxs[0].tolist(), scores[0].tolist()):
@@ -953,7 +953,7 @@ div[role="listbox"] ul li * {
                     dense_ranked.append((int(i), float(s)))
 
                 # Get the top k2 sparse rankings and fuse them with the dense rankings
-                sparse_k = 200
+                sparse_k = 500
                 sparse_ranked = sparse_retrieve(
                     question,
                     term_freqs=sparse_tf,

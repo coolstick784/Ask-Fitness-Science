@@ -1,0 +1,11 @@
+{
+  "model": "BAAI/bge-base-en-v1.5",
+  "dim": 768,
+  "chunks": 87273,
+  "target_words": 320,
+  "overlap": 80,
+  "one_chunk_per_article": true,
+  "corpus": "pipeline-data\\pmc_corpus.jsonl",
+  "chunks_path": "pipeline-data\\pmc_chunks.jsonl",
+  "index_path": "pipeline-data\\pmc_faiss.index"
+}
