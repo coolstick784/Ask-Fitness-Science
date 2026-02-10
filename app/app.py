@@ -719,6 +719,7 @@ def normalize_summary_sections(summary_text: str) -> str:
             section_text,
             flags=re.IGNORECASE | re.DOTALL,
         )
+        section_text = re.sub(r"<\s*none\s*>", "", section_text, flags=re.IGNORECASE)
         section_text = section_text.replace("*", "")
 
         section_text = re.sub(r"[ \t]+", " ", section_text)
@@ -1007,13 +1008,13 @@ div[role="listbox"] ul li * {
                     key=lambda c: float(c.get("score", 0.0)),
                     reverse=True,
                 )
-                grouped = grouped[:5]
+                grouped = grouped[:10]
 
                 # Format the studies, get the LLM response, time the response, and write the reuslts
                 answer = format_referenced_studies_llm(
                     contexts=grouped,
                 )
-                full_abstract_context = format_full_abstract_context(grouped, max_studies=5)
+                full_abstract_context = format_full_abstract_context(grouped, max_studies=10)
                 summary_budget = min(num_predict, summary_predict)
                 summary_prompt = format_summary_prompt(
                     question,
@@ -1021,6 +1022,7 @@ div[role="listbox"] ul li * {
                     is_comparative=comparative,
                     token_budget=summary_budget,
                 )
+    
                 
                 try:
                     answer_summary = call_groq(model, summary_prompt, num_predict=summary_budget)
