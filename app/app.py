@@ -491,6 +491,7 @@ def call_groq(model: str, prompt: str, num_predict: int) -> str:
                 "role": "system",
                 "content": (
                     "If the answer is not in the quotes, say \"Not in corpus.\""
+                    "Answer at a 8th-grade reading level "
                 ),
             },
             {"role": "user", "content": prompt},
@@ -511,6 +512,8 @@ def call_groq(model: str, prompt: str, num_predict: int) -> str:
     )
     if resp.status_code == 404:
         raise RuntimeError("This Groq model is currently down. Please try again later.")
+    if resp.status_code == 429:
+        raise RuntimeError("Groq rate limit reached (429). Please try again later.")
     resp.raise_for_status()
     data = resp.json()
     content = ""
@@ -681,7 +684,6 @@ def format_summary_prompt(question: str, studies_answer: str, is_comparative: bo
         "CONTENT RULES:\n"
         "1) Use ONLY the studies provided below.\n"
         "2) Cite ONLY relevant studies.\n"
-        "2.5) Use plain language a high school student can understand. Prefer short, simple words and avoid jargon.\n"
         "3) If any part of the question is missing/indirect/one-sided or evidence is inconclusive: "
         "explicitly say 'partial/incomplete' in the Conclusion, "
         "and list specific missing items in Gaps, one per line.\n"
