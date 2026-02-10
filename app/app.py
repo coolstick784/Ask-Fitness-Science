@@ -95,7 +95,8 @@ def list_groq_models() -> List[str]:
         data = resp.json()
         items = data.get("data", []) if isinstance(data, dict) else []
         names = [str(m.get("id", "")).strip() for m in items if isinstance(m, dict) and m.get("id")]
-        names = sorted(set(n for n in names if n and n.lower().startswith("groq")))
+        #names = sorted(set(n for n in names  ))
+        names = sorted(set(n for n in names if n.lower().startswith("groq") or 'versatile' in n.lower() or '0905' in n.lower()))
         return names or defaults
     except Exception:
         return defaults
@@ -1008,13 +1009,13 @@ div[role="listbox"] ul li * {
                     key=lambda c: float(c.get("score", 0.0)),
                     reverse=True,
                 )
-                grouped = grouped[:10]
+                grouped = grouped[:5]
 
                 # Format the studies, get the LLM response, time the response, and write the reuslts
                 answer = format_referenced_studies_llm(
                     contexts=grouped,
                 )
-                full_abstract_context = format_full_abstract_context(grouped, max_studies=10)
+                full_abstract_context = format_full_abstract_context(grouped, max_studies=5)
                 summary_budget = min(num_predict, summary_predict)
                 summary_prompt = format_summary_prompt(
                     question,
