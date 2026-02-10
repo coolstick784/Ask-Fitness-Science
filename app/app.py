@@ -37,7 +37,7 @@ RESPONSE_LEVEL_MAP = {"Short": "Low", "Medium": "Medium", "Long": "High"}
 # Quality-only profile for production use.
 QUALITY_PROFILE = {
     "model": "groq/compound",
-    "embed_model": "BAAI/bge-large-en-v1.5",
+    "embed_model": "BAAI/bge-base-en-v1.5",
     "top_k": 10,
     "num_predict": 512,
     "summary_predict": 256,

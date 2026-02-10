@@ -90,7 +90,7 @@ def main() -> None:
             "--corpus",
             str(corpus_path),
             "--model",
-            "BAAI/bge-large-en-v1.5",
+            "BAAI/bge-base-en-v1.5",
             "--out_index",
             str(std_index),
             "--out_chunks",

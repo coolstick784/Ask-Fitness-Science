@@ -96,7 +96,7 @@ def main():
     # Add arguments with paths, target words, model names, and the batch size
     parser = argparse.ArgumentParser(description="Build FAISS index for PMC corpus")
     parser.add_argument("--corpus", default="pmc_corpus.jsonl", help="Path to corpus JSONL")
-    parser.add_argument("--model", default="BAAI/bge-large-en-v1.5", help="SentenceTransformer model name")
+    parser.add_argument("--model", default="BAAI/bge-base-en-v1.5", help="SentenceTransformer model name")
     parser.add_argument("--target_words", type=int, default=320, help="Words per chunk")
     parser.add_argument("--overlap", type=int, default=80, help="Word overlap between chunks")
 
