@@ -29,6 +29,7 @@ DATA_DIR = BASE_DIR / "pipeline-data"
 TOKEN_LEVELS = {"Low": 160, "Medium": 320, "High": 640}
 SUMMARY_TOKEN_LEVELS = {"Low": 96, "Medium": 192, "High": 320}
 CHUNK_LEVELS = {"Low": 4, "Medium": 8, "High": 12}
+RESPONSE_LEVEL_MAP = {"Short": "Low", "Medium": "Medium", "Long": "High"}
 
 
 # Set speed profiles
@@ -499,7 +500,6 @@ def call_groq(model: str, prompt: str, num_predict: int) -> str:
         "max_tokens": int(num_predict),
         "stream": False,
     }
-    # Post the request to GROQ and return the response
     resp = requests.post(
         f"{GROQ_API_BASE}/chat/completions",
         headers={
@@ -509,6 +509,8 @@ def call_groq(model: str, prompt: str, num_predict: int) -> str:
         json=payload,
         timeout=180,
     )
+    if resp.status_code == 404:
+        raise RuntimeError("This Groq model is currently down. Please try again later.")
     resp.raise_for_status()
     data = resp.json()
     content = ""
@@ -517,7 +519,6 @@ def call_groq(model: str, prompt: str, num_predict: int) -> str:
         if choices and isinstance(choices[0], dict):
             msg = choices[0].get("message", {})
             content = str(msg.get("content", "")).strip()
-
     return content
 
 # Return the PubMed URL from a study ID
@@ -680,6 +681,7 @@ def format_summary_prompt(question: str, studies_answer: str, is_comparative: bo
         "CONTENT RULES:\n"
         "1) Use ONLY the studies provided below.\n"
         "2) Cite ONLY relevant studies.\n"
+        "2.5) Use plain language a high school student can understand. Prefer short, simple words and avoid jargon.\n"
         "3) If any part of the question is missing/indirect/one-sided or evidence is inconclusive: "
         "explicitly say 'partial/incomplete' in the Conclusion, "
         "and list specific missing items in Gaps, one per line.\n"
@@ -854,10 +856,12 @@ div[role="listbox"] ul li * {
             st.error("No Groq models found that start with 'groq'.")
             return
         model = st.selectbox("Groq model", options=available_models, index=0)
+        response_length = st.selectbox("Response length", options=["Short", "Medium", "Long"], index=1)
 
         embed_model_name = profile["embed_model"]
-        num_predict = TOKEN_LEVELS["High"]
-        summary_predict = SUMMARY_TOKEN_LEVELS["High"]
+        token_level = RESPONSE_LEVEL_MAP[response_length]
+        num_predict = TOKEN_LEVELS[token_level]
+        summary_predict = SUMMARY_TOKEN_LEVELS[token_level]
 
 
         index_path = Path(profile["index_path"])
@@ -1016,13 +1020,16 @@ div[role="listbox"] ul li * {
                     token_budget=summary_budget,
                 )
                 
-                answer_summary = call_groq(model, summary_prompt, num_predict=summary_budget)
+                try:
+                    answer_summary = call_groq(model, summary_prompt, num_predict=summary_budget)
+                except RuntimeError as e:
+                    st.error(str(e))
+                    return
 
                 answer_summary = normalize_summary_sections(answer_summary)
                 answer_summary = convert_study_number_citations_to_links(answer_summary, grouped)
                 answer_summary = strip_redundant_inline_pmc_links(answer_summary)
                 response_time_s = time.perf_counter() - query_start
-
             st.markdown("**Answer Summary**")
             st.markdown(answer_summary)
             st.caption(f"Response time: {response_time_s:.2f}s")
