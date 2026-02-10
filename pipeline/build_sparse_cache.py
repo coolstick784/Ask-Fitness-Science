@@ -15,7 +15,7 @@ from app import load_sparse_index
 
 def main() -> None:
     data_dir = ROOT / "pipeline-data"
-    for chunks_name in ("pmc_chunks.jsonl", "pmc_chunks_fast.jsonl"):
+    for chunks_name in ("pmc_chunks.jsonl.gz", "pmc_chunks.jsonl"):
         chunks_path = data_dir / chunks_name
         if not chunks_path.exists():
             continue

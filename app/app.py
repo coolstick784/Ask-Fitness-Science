@@ -9,6 +9,7 @@ import os
 import pickle
 import re
 import time
+import gzip
 from pathlib import Path
 from typing import Dict, List, Tuple
 
@@ -55,7 +56,7 @@ SPEED_PROFILES = {
         "context_chars": 700,
         "max_studies": 3,
         "index_path": str(DATA_DIR / "pmc_faiss.index"),
-        "chunks_path": str(DATA_DIR / "pmc_chunks.jsonl"),
+        "chunks_path": str(DATA_DIR / "pmc_chunks.jsonl.gz"),
         "index_meta_path": str(DATA_DIR / "pmc_index_meta.json"),
     },
     "Quality": {
@@ -67,7 +68,7 @@ SPEED_PROFILES = {
         "context_chars": 900,
         "max_studies": 3,
         "index_path": str(DATA_DIR / "pmc_faiss.index"),
-        "chunks_path": str(DATA_DIR / "pmc_chunks.jsonl"),
+        "chunks_path": str(DATA_DIR / "pmc_chunks.jsonl.gz"),
         "index_meta_path": str(DATA_DIR / "pmc_index_meta.json"),
     },
 }
@@ -77,6 +78,12 @@ SPEED_PROFILES = {
 @st.cache_resource(show_spinner=False)
 def load_index(index_path: Path) -> faiss.Index:
     return faiss.read_index(str(index_path))
+
+
+def open_text_auto(path: Path):
+    if str(path).lower().endswith(".gz"):
+        return gzip.open(path, "rt", encoding="utf-8")
+    return path.open("r", encoding="utf-8")
 
 
 # Cache the data for the models
@@ -125,7 +132,7 @@ def load_chunks(chunks_path: Path) -> List[Dict]:
             pass
 
     chunks: List[Dict] = []
-    with chunks_path.open("r", encoding="utf-8") as f:
+    with open_text_auto(chunks_path) as f:
         for line in f:
             line = line.strip()
             if not line:
@@ -189,7 +196,7 @@ def load_pmid_map(path: Path) -> Dict[str, str]:
     mapping: Dict[str, str] = {}
     if not path.exists():
         return mapping
-    with path.open("r", encoding="utf-8") as f:
+    with open_text_auto(path) as f:
         for line in f:
             try:
                 rec = json.loads(line)
@@ -874,6 +881,10 @@ div[role="listbox"] ul li * {
     
     # Define the PMID mapping path
     pmid_map_path = DATA_DIR / "pmid_to_pmcid.jsonl"
+    if not pmid_map_path.exists():
+        pmid_map_gz = DATA_DIR / "pmid_to_pmcid.jsonl.gz"
+        if pmid_map_gz.exists():
+            pmid_map_path = pmid_map_gz
     if not index_path.exists() or not chunks_path.exists():
         st.error("Index or chunks missing for the quality profile. Build the corresponding files first.")
         return

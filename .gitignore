@@ -2,4 +2,10 @@
 Archive/
 __pycache__/
 *.pyc
-npipeline-data/.jsonlnpipeline-data/*.pklnpipeline-data/.indexnpipeline-data/*.faissnpipeline-data/*.npynpipeline-data/*.npzn.venv/ nArchive/
+pipeline-data/*.index
+pipeline-data/*.faiss
+pipeline-data/*.pkl
+pipeline-data/*.npy
+pipeline-data/*.npz
+pipeline-data/*.jsonl
+pipeline-data/*_fast.*

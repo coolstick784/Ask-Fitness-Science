@@ -6,6 +6,8 @@ This scrapes the data, builds a corpus, and builds the index
 
 
 import argparse
+import gzip
+import shutil
 import subprocess
 import sys
 import time
@@ -22,6 +24,13 @@ def run_step(name: str, cmd: list[str], cwd: Path) -> None:
     if proc.returncode != 0:
         raise RuntimeError(f"{name} failed with exit code {proc.returncode} after {elapsed:.1f}s")
     print(f"{name} completed in {elapsed:.1f}s")
+
+
+def gzip_file(path: Path) -> Path:
+    gz_path = path.with_suffix(path.suffix + ".gz")
+    with path.open("rb") as src, gzip.open(gz_path, "wb", compresslevel=9) as dst:
+        shutil.copyfileobj(src, dst)
+    return gz_path
 
 
 def main() -> None:
@@ -59,9 +68,6 @@ def main() -> None:
     std_index = data_dir / "pmc_faiss.index"
     std_chunks = data_dir / "pmc_chunks.jsonl"
     std_meta = data_dir / "pmc_index_meta.json"
-    fast_index = data_dir / "pmc_faiss_fast.index"
-    fast_chunks = data_dir / "pmc_chunks_fast.jsonl"
-    fast_meta = data_dir / "pmc_index_meta_fast.json"
 
 
     if not input_jsonl.exists():
@@ -81,8 +87,7 @@ def main() -> None:
         cwd=pipeline_dir,
     )
 
-    # Build both a standard and fast index
-
+    # Build standard index only.
     run_step(
         "Build standard index (Balanced/Quality)",
         [
@@ -101,29 +106,23 @@ def main() -> None:
         ],
         cwd=pipeline_dir,
     )
+    # Write compressed copies for easier upload/archival.
+    compressed_input = gzip_file(input_jsonl)
+    compressed_corpus = gzip_file(corpus_path)
+    compressed_chunks = gzip_file(std_chunks)
 
-    run_step(
-        "Build fast index (Fast)",
-        [
-            py,
-            "build_index.py",
-            "--corpus",
-            str(corpus_path),
-            "--model",
-            "all-MiniLM-L6-v2",
-            "--out_index",
-            str(fast_index),
-            "--out_chunks",
-            str(fast_chunks),
-            "--out_meta",
-            str(fast_meta),
-        ],
-        cwd=pipeline_dir,
-    )
-
-
+    # Remove stale fast-profile artifacts if they exist.
+    for stale in (
+        data_dir / "pmc_faiss_fast.index",
+        data_dir / "pmc_chunks_fast.jsonl",
+        data_dir / "pmc_index_meta_fast.json",
+        data_dir / "pmc_chunks_fast.jsonl.gz",
+    ):
+        if stale.exists():
+            stale.unlink()
 
     print("\nPipeline completed.")
+    print(f"Compressed: {compressed_input.name}, {compressed_corpus.name}, {compressed_chunks.name}")
     print("Run the app with: streamlit run app/app.py")
 
 
