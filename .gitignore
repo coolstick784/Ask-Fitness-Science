@@ -9,3 +9,5 @@ pipeline-data/*.npy
 pipeline-data/*.npz
 pipeline-data/*.jsonl
 pipeline-data/*_fast.*
+pipeline-data/*.reconstructed
+pipeline-data/*/pipeline-data/

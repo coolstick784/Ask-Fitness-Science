@@ -90,6 +90,35 @@ def fetch_batch_xml(pmids: List[str]) -> str:
     xml_text = run_cmd(f"efetch -db pubmed -id '{ids}' -format xml")
     return sanitize_xml_entities(xml_text)
 
+
+def write_articles_from_xml(xml_text: str, out_file, written: int) -> int:
+    root = ET.fromstring(xml_text)
+    for pm_article in root.findall(".//PubmedArticle"):
+        pmid = (pm_article.findtext(".//MedlineCitation/PMID") or "").strip()
+        if not pmid:
+            continue
+
+        title = (pm_article.findtext(".//Article/ArticleTitle") or "").strip()
+        journal = (pm_article.findtext(".//Article/Journal/Title") or "").strip()
+        year = extract_year(pm_article)
+        abstract = extract_abstract(pm_article)
+
+        out_file.write(
+            json.dumps(
+                {
+                    "pmid": pmid,
+                    "year": year,
+                    "journal": journal,
+                    "title": title,
+                    "abstract": abstract,
+                },
+                ensure_ascii=False,
+            )
+            + "\n"
+        )
+        written += 1
+    return written
+
 # Convert the text to a string
 def _text(elem: Optional[ET.Element]) -> str:
     if elem is None:
@@ -143,33 +172,31 @@ def main():
     with OUT_JSONL.open("w", encoding="utf-8") as f:
         for start in range(0, total, BATCH_SIZE):
             batch_pmids = pmids[start : start + BATCH_SIZE]
-            xml_text = fetch_batch_xml(batch_pmids)
-            root = ET.fromstring(xml_text)
-
-            for pm_article in root.findall(".//PubmedArticle"):
-                pmid = (pm_article.findtext(".//MedlineCitation/PMID") or "").strip()
-                if not pmid:
-                    continue
-
-                title = (pm_article.findtext(".//Article/ArticleTitle") or "").strip()
-                journal = (pm_article.findtext(".//Article/Journal/Title") or "").strip()
-                year = extract_year(pm_article)
-                abstract = extract_abstract(pm_article)
-
-                f.write(
-                    json.dumps(
-                        {
-                            "pmid": pmid,
-                            "year": year,
-                            "journal": journal,
-                            "title": title,
-                            "abstract": abstract,
-                        },
-                        ensure_ascii=False,
-                    )
-                    + "\n"
+            try:
+                xml_text = fetch_batch_xml(batch_pmids)
+                written = write_articles_from_xml(xml_text, f, written)
+            except ET.ParseError:
+                print(
+                    "Warning: malformed batch XML; retrying PMIDs individually "
+                    f"for batch starting at index {start}."
                 )
-                written += 1
+                for one_pmid in batch_pmids:
+                    try:
+                        one_xml = fetch_batch_xml([one_pmid])
+                        written = write_articles_from_xml(one_xml, f, written)
+                    except Exception:
+                        print(f"Warning: skipping PMID {one_pmid} (failed to fetch/parse).")
+            except Exception:
+                print(
+                    "Warning: batch fetch failed; retrying PMIDs individually "
+                    f"for batch starting at index {start}."
+                )
+                for one_pmid in batch_pmids:
+                    try:
+                        one_xml = fetch_batch_xml([one_pmid])
+                        written = write_articles_from_xml(one_xml, f, written)
+                    except Exception:
+                        print(f"Warning: skipping PMID {one_pmid} (failed to fetch/parse).")
 
             print(f"Processed {min(start + BATCH_SIZE, total)}/{total} PMIDs | wrote {written}")
 

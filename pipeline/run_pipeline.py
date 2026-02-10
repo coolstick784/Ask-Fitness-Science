@@ -6,8 +6,6 @@ This scrapes the data, builds a corpus, and builds the index
 
 
 import argparse
-import gzip
-import shutil
 import subprocess
 import sys
 import time
@@ -26,13 +24,6 @@ def run_step(name: str, cmd: list[str], cwd: Path) -> None:
     print(f"{name} completed in {elapsed:.1f}s")
 
 
-def gzip_file(path: Path) -> Path:
-    gz_path = path.with_suffix(path.suffix + ".gz")
-    with path.open("rb") as src, gzip.open(gz_path, "wb", compresslevel=9) as dst:
-        shutil.copyfileobj(src, dst)
-    return gz_path
-
-
 def main() -> None:
     
     parser = argparse.ArgumentParser(description="Run ask_science pipeline")
@@ -40,6 +31,9 @@ def main() -> None:
 
     parser.add_argument("--input-jsonl", default="pubmed_resistance_training_abstracts_edirect.jsonl", help="Input abstracts JSONL")
     parser.add_argument("--corpus", default="pmc_corpus.jsonl", help="Output corpus JSONL")
+    parser.add_argument("--publish-to-hf", action="store_true", help="Upload generated artifacts to HF dataset")
+    parser.add_argument("--hf-repo-id", default="coolstick/Ask-Fitness-Science", help="HF dataset repo id, e.g. user/repo")
+    parser.add_argument("--hf-token-env", default="HF_TOKEN", help="Environment variable name for HF token")
     args = parser.parse_args()
 
     # The pipeline directory for data is pipeline-data
@@ -106,23 +100,38 @@ def main() -> None:
         ],
         cwd=pipeline_dir,
     )
-    # Write compressed copies for easier upload/archival.
-    compressed_input = gzip_file(input_jsonl)
-    compressed_corpus = gzip_file(corpus_path)
-    compressed_chunks = gzip_file(std_chunks)
-
-    # Remove stale fast-profile artifacts if they exist.
+    # Remove stale split/compressed artifacts if they exist.
+    for stale in data_dir.glob("*.part*"):
+        stale.unlink()
+    for stale in data_dir.glob("*.gz"):
+        stale.unlink()
     for stale in (
         data_dir / "pmc_faiss_fast.index",
         data_dir / "pmc_chunks_fast.jsonl",
         data_dir / "pmc_index_meta_fast.json",
-        data_dir / "pmc_chunks_fast.jsonl.gz",
     ):
         if stale.exists():
             stale.unlink()
 
+    if args.publish_to_hf:
+        run_step(
+            "Publish artifacts to Hugging Face",
+            [
+                py,
+                "publish_to_hf.py",
+                "--repo-id",
+                args.hf_repo_id.strip(),
+                "--data-dir",
+                str(data_dir),
+                "--token-env",
+                args.hf_token_env,
+            ],
+            cwd=pipeline_dir,
+        )
+
     print("\nPipeline completed.")
-    print(f"Compressed: {compressed_input.name}, {compressed_corpus.name}, {compressed_chunks.name}")
+    if args.publish_to_hf:
+        print(f"Published artifacts to HF dataset: {args.hf_repo_id}")
     print("Run the app with: streamlit run app/app.py")
 
 

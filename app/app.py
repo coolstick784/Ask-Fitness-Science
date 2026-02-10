@@ -9,7 +9,6 @@ import os
 import pickle
 import re
 import time
-import gzip
 from pathlib import Path
 from typing import Dict, List, Tuple
 
@@ -23,6 +22,8 @@ from sentence_transformers import SentenceTransformer
 # Use GROQ for the API for the LLM
 GROQ_API_BASE = "https://api.groq.com/openai/v1"
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
+HF_DATASET_REPO_ID = "coolstick/Ask-Fitness-Science"
+HF_TOKEN = os.getenv("HF_TOKEN", "").strip()
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "pipeline-data"
 
@@ -33,44 +34,18 @@ CHUNK_LEVELS = {"Low": 4, "Medium": 8, "High": 12}
 RESPONSE_LEVEL_MAP = {"Short": "Low", "Medium": "Medium", "Long": "High"}
 
 
-# Set speed profiles
-SPEED_PROFILES = {
-    "Fast": {
-        "model": "llama-3.1-8b-instant",
-        "embed_model": "all-MiniLM-L6-v2",
-        "top_k": 4,
-        "num_predict": 192,
-        "summary_predict": 96,
-        "context_chars": 420,
-        "max_studies": 2,
-        "index_path": str(DATA_DIR / "pmc_faiss_fast.index"),
-        "chunks_path": str(DATA_DIR / "pmc_chunks_fast.jsonl"),
-        "index_meta_path": str(DATA_DIR / "pmc_index_meta_fast.json"),
-    },
-    "Balanced": {
-        "model": "llama-3.3-70b-versatile",
-        "embed_model": "BAAI/bge-large-en-v1.5",
-        "top_k": 6,
-        "num_predict": 320,
-        "summary_predict": 160,
-        "context_chars": 700,
-        "max_studies": 3,
-        "index_path": str(DATA_DIR / "pmc_faiss.index"),
-        "chunks_path": str(DATA_DIR / "pmc_chunks.jsonl.gz"),
-        "index_meta_path": str(DATA_DIR / "pmc_index_meta.json"),
-    },
-    "Quality": {
-        "model": "groq/compound",
-        "embed_model": "BAAI/bge-base-en-v1.5",
-        "top_k": 10,
-        "num_predict": 512,
-        "summary_predict": 256,
-        "context_chars": 900,
-        "max_studies": 3,
-        "index_path": str(DATA_DIR / "pmc_faiss.index"),
-        "chunks_path": str(DATA_DIR / "pmc_chunks.jsonl.gz"),
-        "index_meta_path": str(DATA_DIR / "pmc_index_meta.json"),
-    },
+# Quality-only profile for production use.
+QUALITY_PROFILE = {
+    "model": "groq/compound",
+    "embed_model": "BAAI/bge-large-en-v1.5",
+    "top_k": 10,
+    "num_predict": 512,
+    "summary_predict": 256,
+    "context_chars": 900,
+    "max_studies": 3,
+    "index_path": str(DATA_DIR / "pmc_faiss.index"),
+    "chunks_path": str(DATA_DIR / "pmc_chunks.jsonl"),
+    "index_meta_path": str(DATA_DIR / "pmc_index_meta.json"),
 }
 
 
@@ -80,16 +55,76 @@ def load_index(index_path: Path) -> faiss.Index:
     return faiss.read_index(str(index_path))
 
 
-def open_text_auto(path: Path):
-    if str(path).lower().endswith(".gz"):
-        return gzip.open(path, "rt", encoding="utf-8")
-    return path.open("r", encoding="utf-8")
+def get_source_signature(path: Path) -> Tuple[int, int] | None:
+    if not path.exists():
+        return None
+    st_obj = path.stat()
+    return int(st_obj.st_size), int(st_obj.st_mtime_ns)
 
 
-# Cache the data for the models
-@st.cache_data(show_spinner=False, ttl=300)
+def iter_text_lines(path: Path):
+    with path.open("r", encoding="utf-8") as f:
+        for line in f:
+            yield line
+
+
+def download_hf_file_if_missing(local_path: Path, repo_id: str) -> bool:
+    if not repo_id:
+        return local_path.exists() and local_path.stat().st_size > 0
+    if local_path.exists() and local_path.stat().st_size > 0:
+        return True
+    local_path.parent.mkdir(parents=True, exist_ok=True)
+    filename = local_path.name
+    url = f"https://huggingface.co/datasets/{repo_id}/resolve/main/{filename}?download=1"
+    headers = {"Authorization": f"Bearer {HF_TOKEN}"} if HF_TOKEN else {}
+    if local_path.exists():
+        try:
+            local_path.unlink()
+        except Exception:
+            pass
+    for attempt in range(3):
+        tmp_path = local_path.with_suffix(local_path.suffix + ".tmp")
+        try:
+            with requests.get(url, headers=headers, stream=True, timeout=(10, 120)) as resp:
+                if resp.status_code != 200:
+                    return False
+                content_len = resp.headers.get("Content-Length")
+                expected_size = int(content_len) if content_len and content_len.isdigit() else None
+                downloaded = 0
+                with tmp_path.open("wb") as out_f:
+                    for chunk in resp.iter_content(chunk_size=1024 * 1024):
+                        if chunk:
+                            out_f.write(chunk)
+                            downloaded += len(chunk)
+                if expected_size is not None and downloaded != expected_size:
+                    raise RuntimeError("Downloaded file size mismatch.")
+            os.replace(tmp_path, local_path)
+            return local_path.exists() and local_path.stat().st_size > 0
+        except Exception:
+            try:
+                if tmp_path.exists():
+                    tmp_path.unlink()
+            except Exception:
+                pass
+            if attempt < 2:
+                time.sleep(0.8 * (attempt + 1))
+    return False
+
+
+def ensure_required_data_files(paths: List[Path]) -> List[Path]:
+    missing: List[Path] = []
+    for p in paths:
+        if p.exists():
+            continue
+        if not download_hf_file_if_missing(p, HF_DATASET_REPO_ID):
+            missing.append(p)
+    return missing
+
+
+# Cache model-list discovery for the app lifetime (until restart/code change).
+@st.cache_data(show_spinner=False)
 def list_groq_models() -> List[str]:
-    defaults: List[str] = []
+    defaults: List[str] = [str(QUALITY_PROFILE["model"])]
     if not GROQ_API_KEY:
         return defaults
     try:
@@ -112,19 +147,16 @@ def list_groq_models() -> List[str]:
 @st.cache_resource(show_spinner=False)
 def load_chunks(chunks_path: Path) -> List[Dict]:
     cache_path = chunks_path.with_suffix(".chunks.pkl")
-    try:
-        src_stat = chunks_path.stat()
-    except Exception:
-        src_stat = None
+    src_sig = get_source_signature(chunks_path)
 
-    if src_stat and cache_path.exists():
+    if src_sig and cache_path.exists():
         try:
             with cache_path.open("rb") as f:
                 obj = pickle.load(f)
             if (
                 isinstance(obj, dict)
-                and int(obj.get("source_size", -1)) == int(src_stat.st_size)
-                and int(obj.get("source_mtime_ns", -1)) == int(src_stat.st_mtime_ns)
+                and int(obj.get("source_size", -1)) == int(src_sig[0])
+                and int(obj.get("source_mtime_ns", -1)) == int(src_sig[1])
                 and isinstance(obj.get("chunks"), list)
             ):
                 return obj["chunks"]
@@ -132,23 +164,22 @@ def load_chunks(chunks_path: Path) -> List[Dict]:
             pass
 
     chunks: List[Dict] = []
-    with open_text_auto(chunks_path) as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                chunks.append(json.loads(line))
-            except Exception:
-                continue
+    for line in iter_text_lines(chunks_path):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            chunks.append(json.loads(line))
+        except Exception:
+            continue
 
-    if src_stat:
+    if src_sig:
         try:
             with cache_path.open("wb") as f:
                 pickle.dump(
                     {
-                        "source_size": int(src_stat.st_size),
-                        "source_mtime_ns": int(src_stat.st_mtime_ns),
+                        "source_size": int(src_sig[0]),
+                        "source_mtime_ns": int(src_sig[1]),
                         "chunks": chunks,
                     },
                     f,
@@ -174,19 +205,16 @@ def load_index_meta(path: Path) -> Dict:
 @st.cache_resource(show_spinner=False)
 def load_pmid_map(path: Path) -> Dict[str, str]:
     cache_path = path.with_suffix(".pmidmap.pkl")
-    try:
-        src_stat = path.stat()
-    except Exception:
-        src_stat = None
+    src_sig = get_source_signature(path)
 
-    if src_stat and cache_path.exists():
+    if src_sig and cache_path.exists():
         try:
             with cache_path.open("rb") as f:
                 obj = pickle.load(f)
             if (
                 isinstance(obj, dict)
-                and int(obj.get("source_size", -1)) == int(src_stat.st_size)
-                and int(obj.get("source_mtime_ns", -1)) == int(src_stat.st_mtime_ns)
+                and int(obj.get("source_size", -1)) == int(src_sig[0])
+                and int(obj.get("source_mtime_ns", -1)) == int(src_sig[1])
                 and isinstance(obj.get("mapping"), dict)
             ):
                 return obj["mapping"]
@@ -196,25 +224,24 @@ def load_pmid_map(path: Path) -> Dict[str, str]:
     mapping: Dict[str, str] = {}
     if not path.exists():
         return mapping
-    with open_text_auto(path) as f:
-        for line in f:
-            try:
-                rec = json.loads(line)
-            except Exception:
-                continue
-            pmcid = rec.get("pmcid")
-            pmid = str(rec.get("pmid", "")).strip()
-            if pmcid and pmcid.startswith("PMC"):
-                mapping[pmcid] = pmcid
-                if pmid:
-                    mapping[pmid] = pmcid
-    if src_stat:
+    for line in iter_text_lines(path):
+        try:
+            rec = json.loads(line)
+        except Exception:
+            continue
+        pmcid = rec.get("pmcid")
+        pmid = str(rec.get("pmid", "")).strip()
+        if pmcid and pmcid.startswith("PMC"):
+            mapping[pmcid] = pmcid
+            if pmid:
+                mapping[pmid] = pmcid
+    if src_sig:
         try:
             with cache_path.open("wb") as f:
                 pickle.dump(
                     {
-                        "source_size": int(src_stat.st_size),
-                        "source_mtime_ns": int(src_stat.st_mtime_ns),
+                        "source_size": int(src_sig[0]),
+                        "source_mtime_ns": int(src_sig[1]),
                         "mapping": mapping,
                     },
                     f,
@@ -337,10 +364,7 @@ def load_sparse_index(
         except Exception:
             pass
 
-    try:
-        src_stat = chunks_path.stat()
-    except Exception:
-        src_stat = None
+    src_sig = get_source_signature(chunks_path)
 
     chunks = load_chunks(chunks_path)
     term_freqs: List[Dict[str, int]] = []
@@ -368,8 +392,8 @@ def load_sparse_index(
         with cache_path.open("wb") as f:
             pickle.dump(
                 {
-                    "source_size": int(src_stat.st_size) if src_stat else -1,
-                    "source_mtime_ns": int(src_stat.st_mtime_ns) if src_stat else -1,
+                    "source_size": int(src_sig[0]) if src_sig else -1,
+                    "source_mtime_ns": int(src_sig[1]) if src_sig else -1,
                     "term_freqs": term_freqs,
                     "doc_lens": doc_lens,
                     "avg_dl": avg_dl,
@@ -383,6 +407,33 @@ def load_sparse_index(
         pass
 
     return term_freqs, doc_lens, avg_dl, idf, postings
+
+
+@st.cache_resource(show_spinner=False)
+def bootstrap_runtime(
+    index_path: Path,
+    chunks_path: Path,
+    index_meta_path: Path,
+    pmid_map_path: Path,
+    embed_model_name: str,
+) -> bool:
+    # Download required artifacts once per process if they are missing.
+    missing_required = ensure_required_data_files([index_path, chunks_path, index_meta_path])
+    ensure_required_data_files([pmid_map_path])
+    if missing_required:
+        missing_str = ", ".join(str(p.name) for p in missing_required)
+        raise FileNotFoundError(f"Missing required retrieval artifacts: {missing_str}")
+    if not index_path.exists() or not chunks_path.exists():
+        raise FileNotFoundError("Index or chunks missing for the quality profile.")
+
+    # Prime all heavy caches once per process.
+    load_index(index_path)
+    load_index_meta(index_meta_path)
+    load_chunks(chunks_path)
+    load_sparse_index(chunks_path)
+    load_embedder(embed_model_name)
+    load_pmid_map(pmid_map_path)
+    return True
 
 
 # Apply the BM25 algorithm for sparse retrieval
@@ -860,13 +911,13 @@ div[role="listbox"] ul li * {
     # Add a sidebar to choose the model
     with st.sidebar:
         st.markdown("### Query Settings")
-        profile = SPEED_PROFILES["Quality"]
+        profile = QUALITY_PROFILE
 
         available_models = list_groq_models()
-        if not available_models:
-            st.error("No Groq models found that start with 'groq'.")
-            return
-        model = st.selectbox("Groq model", options=available_models, index=0)
+        default_model = str(profile["model"])
+        if default_model not in available_models:
+            available_models = [default_model] + available_models
+        model = st.selectbox("Groq model", options=available_models, index=available_models.index(default_model))
         response_length = st.selectbox("Response length", options=["Short", "Medium", "Long"], index=1)
 
         embed_model_name = profile["embed_model"]
@@ -881,24 +932,18 @@ div[role="listbox"] ul li * {
     
     # Define the PMID mapping path
     pmid_map_path = DATA_DIR / "pmid_to_pmcid.jsonl"
-    if not pmid_map_path.exists():
-        pmid_map_gz = DATA_DIR / "pmid_to_pmcid.jsonl.gz"
-        if pmid_map_gz.exists():
-            pmid_map_path = pmid_map_gz
-    if not index_path.exists() or not chunks_path.exists():
-        st.error("Index or chunks missing for the quality profile. Build the corresponding files first.")
+    try:
+        with st.spinner("Initializing retrieval cache..."):
+            bootstrap_runtime(
+                index_path=index_path,
+                chunks_path=chunks_path,
+                index_meta_path=index_meta_path,
+                pmid_map_path=pmid_map_path,
+                embed_model_name=embed_model_name,
+            )
+    except FileNotFoundError as e:
+        st.error(str(e))
         return
-
-    # One-time warmup so first query does not pay full cold-start costs.
-    if not st.session_state.get("_warmup_done", False):
-        with st.spinner("Warming up retrieval..."):
-            load_index(index_path)
-            load_index_meta(index_meta_path)
-            load_chunks(chunks_path)
-            load_sparse_index(chunks_path)
-            load_embedder(embed_model_name)
-            load_pmid_map(pmid_map_path)
-        st.session_state["_warmup_done"] = True
     
     # Defint the chat history and prompt the user
 
@@ -955,7 +1000,7 @@ div[role="listbox"] ul li * {
                         )
                         return
                 # Get the top k1 dense rankings
-                dense_k = 300
+                dense_k = 80
                 scores, idxs = retrieve(q_emb, index, dense_k)
                 dense_ranked: List[Tuple[int, float]] = []
                 for i, s in zip(idxs[0].tolist(), scores[0].tolist()):
@@ -964,7 +1009,7 @@ div[role="listbox"] ul li * {
                     dense_ranked.append((int(i), float(s)))
 
                 # Get the top k2 sparse rankings and fuse them with the dense rankings
-                sparse_k = 500
+                sparse_k = 200
                 sparse_ranked = sparse_retrieve(
                     question,
                     term_freqs=sparse_tf,

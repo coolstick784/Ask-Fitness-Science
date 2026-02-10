@@ -15,17 +15,18 @@ from app import load_sparse_index
 
 def main() -> None:
     data_dir = ROOT / "pipeline-data"
-    for chunks_name in ("pmc_chunks.jsonl.gz", "pmc_chunks.jsonl"):
+    for chunks_name in ("pmc_chunks.jsonl",):
         chunks_path = data_dir / chunks_name
-        if not chunks_path.exists():
-            continue
         print(f"Building sparse cache for {chunks_path} ...")
-        term_freqs, doc_lens, avg_dl, idf, postings = load_sparse_index(chunks_path)
-        cache_path = chunks_path.with_suffix(".sparse.pkl")
-        print(
-            f"Done: {cache_path} | docs={len(term_freqs)} | "
-            f"avg_dl={avg_dl:.2f} | vocab={len(idf)} | postings_terms={len(postings)}"
-        )
+        try:
+            term_freqs, doc_lens, avg_dl, idf, postings = load_sparse_index(chunks_path)
+            cache_path = chunks_path.with_suffix(".sparse.pkl")
+            print(
+                f"Done: {cache_path} | docs={len(term_freqs)} | "
+                f"avg_dl={avg_dl:.2f} | vocab={len(idf)} | postings_terms={len(postings)}"
+            )
+        except FileNotFoundError:
+            print(f"Skipped: missing {chunks_path} and split parts.")
 
 
 if __name__ == "__main__":

@@ -6,7 +6,6 @@ Build a FAISS index for a dense search from the abstracts
 """
 
 import argparse
-import gzip
 import json
 import math
 from pathlib import Path
@@ -18,12 +17,8 @@ from sentence_transformers import SentenceTransformer
 
 #load the corpus
 def load_corpus(path: Path) -> List[Dict]:
-    if str(path).lower().endswith(".gz"):
-        f = gzip.open(path, "rt", encoding="utf-8")
-    else:
-        f = path.open("r", encoding="utf-8")
-    with f:
-        return [json.loads(line) for line in f]
+    with path.open("r", encoding="utf-8") as f:
+        return [json.loads(line) for line in f if line.strip()]
 
 
 

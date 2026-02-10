@@ -8,18 +8,12 @@ The key difference is that we convert the abstract: <abstract> into sections:[{"
 """
 
 import argparse
-import gzip
 import json
 from pathlib import Path
 
-
 # Iterate through and return json
 def iter_jsonl(path: Path):
-    if str(path).lower().endswith(".gz"):
-        f = gzip.open(path, "rt", encoding="utf-8")
-    else:
-        f = path.open("r", encoding="utf-8")
-    with f:
+    with path.open("r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if not line:
