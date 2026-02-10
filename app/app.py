@@ -511,9 +511,9 @@ def call_groq(model: str, prompt: str, num_predict: int) -> str:
         timeout=180,
     )
     if resp.status_code == 404:
-        raise RuntimeError("This Groq model is currently down. Please try again later.")
+        raise RuntimeError("This Groq model is currently down. Please try another model.")
     if resp.status_code == 429:
-        raise RuntimeError("Groq rate limit reached (429). Please try again later.")
+        raise RuntimeError("Groq rate limit reached (429). Please try another model.")
     resp.raise_for_status()
     data = resp.json()
     content = ""
