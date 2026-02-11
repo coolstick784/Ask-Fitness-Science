@@ -58,7 +58,7 @@ For the LLM API, I decided to use Groq's free tier. This tier is generous with t
 
 To ensure accuracy with the LLM's response, I prompted it to only take information from the studies at hand. This limits responses when questions are not directly addressed, but ensures accuracy. Furthermore, due to the limitations of the free LLMs, it attempts to rephrase rather than simplify the studies, making the responses more difficult to comprehend for certain users.  
 
-To ensure that the LLM did not hallucinate, I asked it to cite a source for each claim it provided.  It formatted each response into sections consisting of a conclusion and gaps in the research. Instead of asking the LLM to cite studies on its own, I instead asked it to cite studies in order, e.g. <Study 1>. That way, links would be formatted correctly, and the LLM had less room to hallucinate studies that didn't exist. After the LLM response was returned, I formatted its response, converted the citations to links, and added a 'Relevant Studies' section to list each study that was pulled in the top 10.
+To ensure that the LLM did not hallucinate, I asked it to cite a source for each claim it provided.  It formatted each response into sections consisting of a conclusion and gaps in the research. Instead of asking the LLM to cite studies on its own, I instead asked it to cite studies in order, e.g. <Study 1>. That way, links would be formatted correctly, and the LLM had less room to hallucinate studies that didn't exist. After the LLM response was returned, I formatted its response, converted the citations to links, and added a 'Relevant Studies' section to list each study that was pulled in the top 10. 100% of citation tags matched the required format, and all citations mapped to retrieved studies in the top-10 list.
 
 
 
@@ -91,7 +91,9 @@ Of the 106 questions, 102 (96.2%) were found to have a satisfactory response tha
 
 
 
-50% of the answers took <= 29.52 seconds to generate, and 95% took <= 55.14 seconds. These times are significantly lower when using models from the Groq API
+50% of the answers took <= 29.52 seconds to generate, and 95% took <= 55.14 seconds. These times are significantly lower when using models from the Groq API. Using the Groq API, answers take < 10 seconds to generate on average.
+
+On unanswerable questions, the model did not give confident fabricated answers.
 
 
 
