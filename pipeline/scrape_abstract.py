@@ -4,6 +4,7 @@ This scrapes the information for the project from PubMed
 """
 
 import json
+import os
 import re
 import subprocess
 import xml.etree.ElementTree as ET
@@ -54,6 +55,22 @@ BATCH_SIZE = 1000
 _BAD_ENTITY = re.compile(r"&(?!(amp|lt|gt|quot|apos);|#\d+;|#x[0-9A-Fa-f]+;)")
 
 
+def _resolve_edirect_bin(name: str) -> str:
+    candidates = [
+        f"/root/edirect/{name}",
+        f"/usr/local/edirect/{name}",
+        f"/opt/edirect/{name}",
+    ]
+    for c in candidates:
+        if os.path.isfile(c) and os.access(c, os.X_OK):
+            return c
+    return name
+
+
+ESEARCH_BIN = _resolve_edirect_bin("esearch")
+EFETCH_BIN = _resolve_edirect_bin("efetch")
+
+
 
 def sanitize_xml_entities(xml_text: str) -> str:
     # Turn "&nbsp;" into "&amp;nbsp;" so XML parser won't choke.
@@ -63,7 +80,15 @@ def sanitize_xml_entities(xml_text: str) -> str:
 
 # Run the scraping command
 def run_cmd(cmd: str) -> str:
-    res = subprocess.run(["bash", "-lc", cmd], capture_output=True, text=True)
+    env = os.environ.copy()
+    # Ensure EDirect binaries are discoverable in container/non-interactive shells.
+    edirect_candidates = ["/root/edirect", "/usr/local/edirect", "/opt/edirect"]
+    existing = env.get("PATH", "")
+    for p in edirect_candidates:
+        if p not in existing:
+            existing = f"{p}:{existing}" if existing else p
+    env["PATH"] = existing
+    res = subprocess.run(["bash", "-lc", cmd], capture_output=True, text=True, env=env)
     if res.returncode != 0:
         raise RuntimeError(
             "EDirect pipeline failed.\n"
@@ -76,7 +101,7 @@ def run_cmd(cmd: str) -> str:
 
 # Run the command to get the IDs for the studies we want
 def fetch_pmids(term: str) -> List[str]:
-    out = run_cmd(f"esearch -db pubmed -query '{term}' | efetch -format uid")
+    out = run_cmd(f"{ESEARCH_BIN} -db pubmed -query '{term}' | {EFETCH_BIN} -format uid")
     pmids: List[str] = []
     for line in out.splitlines():
         p = line.strip()
@@ -87,7 +112,7 @@ def fetch_pmids(term: str) -> List[str]:
 # Fetch the XML with the abstract for each ID we want
 def fetch_batch_xml(pmids: List[str]) -> str:
     ids = ",".join(pmids)
-    xml_text = run_cmd(f"efetch -db pubmed -id '{ids}' -format xml")
+    xml_text = run_cmd(f"{EFETCH_BIN} -db pubmed -id '{ids}' -format xml")
     return sanitize_xml_entities(xml_text)
 
 

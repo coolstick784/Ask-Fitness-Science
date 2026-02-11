@@ -24,6 +24,16 @@ def run_step(name: str, cmd: list[str], cwd: Path) -> None:
     print(f"{name} completed in {elapsed:.1f}s")
 
 
+def to_wsl_path(path: Path) -> str:
+    raw = str(path.resolve())
+    # Convert Windows absolute path like C:\x\y to /mnt/c/x/y for WSL.
+    if len(raw) >= 3 and raw[1] == ":" and raw[2] in ("\\", "/"):
+        drive = raw[0].lower()
+        rest = raw[3:].replace("\\", "/")
+        return f"/mnt/{drive}/{rest}"
+    return raw.replace("\\", "/")
+
+
 def main() -> None:
     
     parser = argparse.ArgumentParser(description="Run ask_science pipeline")
@@ -42,17 +52,17 @@ def main() -> None:
     data_dir = root_dir / "pipeline-data"
     data_dir.mkdir(parents=True, exist_ok=True)
 
-    # Scrape data from PubMed's API using WSL
-    # Use WSL because PubMed's scraper is not available for Windows
+    # Scrape data from PubMed's API.
+    # On Windows, use WSL for EDirect. On Linux/macOS (including Docker), run directly.
     py = sys.executable
-    scrape_wsl_path = "/mnt/c/Users/cools/ask_science/pipeline/scrape_abstract.py"
+    scrape_script = pipeline_dir / "scrape_abstract.py"
+    if sys.platform.startswith("win"):
+        scrape_cmd = ["wsl", "python3", to_wsl_path(scrape_script)]
+    else:
+        scrape_cmd = [py, str(scrape_script)]
     run_step(
         "Scrape abstracts",
-        [
-            "wsl",
-            "python3",
-            scrape_wsl_path,
-        ],
+        scrape_cmd,
         cwd=pipeline_dir,
     )
 

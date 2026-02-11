@@ -15,7 +15,7 @@ import faiss
 import numpy as np
 from sentence_transformers import SentenceTransformer
 
-#load the corpus
+# Load the corpus
 def load_corpus(path: Path) -> List[Dict]:
     with path.open("r", encoding="utf-8") as f:
         return [json.loads(line) for line in f if line.strip()]
@@ -55,7 +55,7 @@ def chunk_one_per_article(record: Dict) -> List[Dict]:
         }
     ]
 
-#Convert the text into an embedding vector
+# Convert the text into an embedding vector
 def embed_texts(model: SentenceTransformer, texts: List[str], batch_size: int = 64) -> np.ndarray:
     embs = model.encode(
         texts,

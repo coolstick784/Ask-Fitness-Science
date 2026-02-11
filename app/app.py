@@ -17,6 +17,12 @@ import numpy as np
 import requests
 import streamlit as st
 from sentence_transformers import SentenceTransformer
+from grade_data.io_utils import read_jsonl
+from grade_data.retrieval_utils import (
+    load_index_meta as util_load_index_meta,
+    load_pmid_map as util_load_pmid_map,
+    sparse_retrieve as util_sparse_retrieve,
+)
 
 
 # Use GROQ for the API for the LLM
@@ -42,7 +48,7 @@ QUALITY_PROFILE = {
     "num_predict": 512,
     "summary_predict": 256,
     "context_chars": 900,
-    "max_studies": 3,
+    "max_studies": 5,
     "index_path": str(DATA_DIR / "pmc_faiss.index"),
     "chunks_path": str(DATA_DIR / "pmc_chunks.jsonl"),
     "index_meta_path": str(DATA_DIR / "pmc_index_meta.json"),
@@ -55,6 +61,7 @@ def load_index(index_path: Path) -> faiss.Index:
     return faiss.read_index(str(index_path))
 
 
+# Return the metadata of a file
 def get_source_signature(path: Path) -> Tuple[int, int] | None:
     if not path.exists():
         return None
@@ -68,20 +75,112 @@ def iter_text_lines(path: Path):
             yield line
 
 
+def _hf_meta_path(local_path: Path) -> Path:
+    return local_path.with_suffix(local_path.suffix + ".hfmeta.json")
+
+
+def _load_local_hf_meta(local_path: Path) -> Dict:
+    meta_path = _hf_meta_path(local_path)
+    if not meta_path.exists():
+        return {}
+    try:
+        return json.loads(meta_path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _save_local_hf_meta(local_path: Path, meta: Dict) -> None:
+    meta_path = _hf_meta_path(local_path)
+    try:
+        meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+
+# Get the HF file metadata
+# This gives information like size and commit, so if these don't match, HF will redownload the files
+def _fetch_remote_hf_file_meta(repo_id: str, filename: str) -> Dict:
+    if not repo_id:
+        return {}
+    url = f"https://huggingface.co/datasets/{repo_id}/resolve/main/{filename}?download=1"
+    headers = {"Authorization": f"Bearer {HF_TOKEN}"} if HF_TOKEN else {}
+    try:
+        resp = requests.head(url, headers=headers, allow_redirects=True, timeout=(8, 20))
+        if resp.status_code != 200:
+            return {}
+        # Common HF headers used for stable identity checks.
+        etag = str(resp.headers.get("ETag", "")).strip().strip('"')
+        commit = str(resp.headers.get("X-Repo-Commit", "")).strip()
+        content_len = resp.headers.get("Content-Length")
+        size = int(content_len) if content_len and content_len.isdigit() else -1
+        return {
+            "repo_id": repo_id,
+            "filename": filename,
+            "etag": etag,
+            "commit": commit,
+            "size": size,
+            "url": url,
+        }
+    except Exception:
+        return {}
+
+# If the path should refresh from HF
+# If there is no HF data, don't refresh
+def _should_refresh_from_hf(local_path: Path, repo_id: str) -> bool:
+
+    # If the local path is missing or empty
+    if not local_path.exists() or local_path.stat().st_size <= 0:
+        return True
+    if not repo_id:
+        return False
+
+    filename = local_path.name
+    # Get the data
+    remote_meta = _fetch_remote_hf_file_meta(repo_id, filename)
+    if not remote_meta:
+
+        return False
+
+    local_meta = _load_local_hf_meta(local_path)
+    if not local_meta:
+
+        return True
+
+    # If the repo ID is not the same, refresh
+    if str(local_meta.get("repo_id", "")).strip() != repo_id:
+        return True
+
+    # If the commit is not the same, refresh
+    remote_commit = str(remote_meta.get("commit", "")).strip()
+    local_commit = str(local_meta.get("commit", "")).strip()
+    if remote_commit and local_commit and remote_commit != local_commit:
+        return True
+    
+    # If the etag or size is not the same, refresh
+    remote_etag = str(remote_meta.get("etag", "")).strip()
+    local_etag = str(local_meta.get("etag", "")).strip()
+    if remote_etag and local_etag and remote_etag != local_etag:
+        return True
+
+    remote_size = int(remote_meta.get("size", -1))
+    if remote_size > 0 and local_path.stat().st_size != remote_size:
+        return True
+
+    return False
+
+
+# Get the file from HuggingFace if it needs a refresh
 def download_hf_file_if_missing(local_path: Path, repo_id: str) -> bool:
     if not repo_id:
         return local_path.exists() and local_path.stat().st_size > 0
-    if local_path.exists() and local_path.stat().st_size > 0:
-        return True
+
     local_path.parent.mkdir(parents=True, exist_ok=True)
     filename = local_path.name
     url = f"https://huggingface.co/datasets/{repo_id}/resolve/main/{filename}?download=1"
     headers = {"Authorization": f"Bearer {HF_TOKEN}"} if HF_TOKEN else {}
-    if local_path.exists():
-        try:
-            local_path.unlink()
-        except Exception:
-            pass
+    remote_meta = _fetch_remote_hf_file_meta(repo_id, filename)
+
+    # Download the file in chunks
     for attempt in range(3):
         tmp_path = local_path.with_suffix(local_path.suffix + ".tmp")
         try:
@@ -99,6 +198,8 @@ def download_hf_file_if_missing(local_path: Path, repo_id: str) -> bool:
                 if expected_size is not None and downloaded != expected_size:
                     raise RuntimeError("Downloaded file size mismatch.")
             os.replace(tmp_path, local_path)
+            if remote_meta:
+                _save_local_hf_meta(local_path, remote_meta)
             return local_path.exists() and local_path.stat().st_size > 0
         except Exception:
             try:
@@ -114,14 +215,14 @@ def download_hf_file_if_missing(local_path: Path, repo_id: str) -> bool:
 def ensure_required_data_files(paths: List[Path]) -> List[Path]:
     missing: List[Path] = []
     for p in paths:
-        if p.exists():
+        if not _should_refresh_from_hf(p, HF_DATASET_REPO_ID):
             continue
         if not download_hf_file_if_missing(p, HF_DATASET_REPO_ID):
             missing.append(p)
     return missing
 
 
-# Cache model-list discovery for the app lifetime (until restart/code change).
+# Cache the model list from Groq. Include models that performed well in testing
 @st.cache_data(show_spinner=False)
 def list_groq_models() -> List[str]:
     defaults: List[str] = [str(QUALITY_PROFILE["model"])]
@@ -137,13 +238,13 @@ def list_groq_models() -> List[str]:
         data = resp.json()
         items = data.get("data", []) if isinstance(data, dict) else []
         names = [str(m.get("id", "")).strip() for m in items if isinstance(m, dict) and m.get("id")]
-        #names = sorted(set(n for n in names  ))
-        names = sorted(set(n for n in names if n.lower().startswith("groq") or 'versatile' in n.lower() or '0905' in n.lower()))
+
+        names = sorted(set(n for n in names if n.lower().startswith("groq") or n.lower() == 'llama-3.3-70b-versatile' or n.lower() == 'moonshotai/kimi-k2-instruct-0905'))
         return names or defaults
     except Exception:
         return defaults
 
-# Load the chunks and cache that data. Try to load a preloaded file if possible
+# Load the chunks and cache that data from a .pkl file, otherwise create it
 @st.cache_resource(show_spinner=False)
 def load_chunks(chunks_path: Path) -> List[Dict]:
     cache_path = chunks_path.with_suffix(".chunks.pkl")
@@ -163,15 +264,7 @@ def load_chunks(chunks_path: Path) -> List[Dict]:
         except Exception:
             pass
 
-    chunks: List[Dict] = []
-    for line in iter_text_lines(chunks_path):
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            chunks.append(json.loads(line))
-        except Exception:
-            continue
+    chunks: List[Dict] = read_jsonl(chunks_path)
 
     if src_sig:
         try:
@@ -193,63 +286,13 @@ def load_chunks(chunks_path: Path) -> List[Dict]:
 
 @st.cache_resource(show_spinner=False)
 def load_index_meta(path: Path) -> Dict:
-    if not path.exists():
-        return {}
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
+    return util_load_index_meta(path)
 
 
 # Load the PMID mapping if possible, otherwise create it
 @st.cache_resource(show_spinner=False)
 def load_pmid_map(path: Path) -> Dict[str, str]:
-    cache_path = path.with_suffix(".pmidmap.pkl")
-    src_sig = get_source_signature(path)
-
-    if src_sig and cache_path.exists():
-        try:
-            with cache_path.open("rb") as f:
-                obj = pickle.load(f)
-            if (
-                isinstance(obj, dict)
-                and int(obj.get("source_size", -1)) == int(src_sig[0])
-                and int(obj.get("source_mtime_ns", -1)) == int(src_sig[1])
-                and isinstance(obj.get("mapping"), dict)
-            ):
-                return obj["mapping"]
-        except Exception:
-            pass
-
-    mapping: Dict[str, str] = {}
-    if not path.exists():
-        return mapping
-    for line in iter_text_lines(path):
-        try:
-            rec = json.loads(line)
-        except Exception:
-            continue
-        pmcid = rec.get("pmcid")
-        pmid = str(rec.get("pmid", "")).strip()
-        if pmcid and pmcid.startswith("PMC"):
-            mapping[pmcid] = pmcid
-            if pmid:
-                mapping[pmid] = pmcid
-    if src_sig:
-        try:
-            with cache_path.open("wb") as f:
-                pickle.dump(
-                    {
-                        "source_size": int(src_sig[0]),
-                        "source_mtime_ns": int(src_sig[1]),
-                        "mapping": mapping,
-                    },
-                    f,
-                    protocol=pickle.HIGHEST_PROTOCOL,
-                )
-        except Exception:
-            pass
-    return mapping
+    return util_load_pmid_map(path)
 
 
 # Load the embedder for the vectorization
@@ -275,10 +318,10 @@ def retrieve(q_emb: np.ndarray, index: faiss.Index, top_k: int) -> Tuple[np.ndar
     return index.search(q_emb, top_k)
 
 
-# load tools for sparse searching. Download them if not found
+# Load tools for sparse searching
 @st.cache_resource(show_spinner=False)
 def load_sparse_nlp_tools() -> Tuple[set, object, object]:
-    # NLTK-based normalization (stopwords + lemmatizer + stemmer).
+    # Load the lemmatizer and stemmer
     import nltk
     from nltk.corpus import stopwords
     from nltk.stem import SnowballStemmer, WordNetLemmatizer
@@ -300,7 +343,7 @@ def load_sparse_nlp_tools() -> Tuple[set, object, object]:
         stop_set = set(stopwords.words("english"))
     except Exception:
         stop_set = set()
-    # Extra filler words to suppress conversational noise in sparse retrieval.
+    # Remove excess filler words
     stop_set.update(
         {
             "also", "about", "across", "after", "before", "between", "during", "each",
@@ -314,7 +357,7 @@ def load_sparse_nlp_tools() -> Tuple[set, object, object]:
     return stop_set, lemmatizer, stemmer
 
 
-# Lemmatize and stem words if identified as a candidate 
+# Lemmatize and stem words 
 def sparse_tokenize(text: str) -> List[str]:
     toks = re.findall(r"[a-z0-9]+", (text or "").lower())
     stop_set, lemmatizer, stemmer = load_sparse_nlp_tools()
@@ -340,13 +383,14 @@ def sparse_tokenize(text: str) -> List[str]:
     return out
 
 # Load the sparse index if possible, otherwise create it
+# Also apply the BM25 algorithm for all documents/tokens for aggregate stats
 @st.cache_resource(show_spinner=False)
 def load_sparse_index(
     chunks_path: Path,
 ) -> Tuple[List[Dict[str, int]], List[int], float, Dict[str, float], Dict[str, List[int]]]:
     cache_path = chunks_path.with_suffix(".sparse.pkl")
-    # On Streamlit Cloud, file mtimes can differ from local builds.
-    # If a cache file exists and has the expected keys, trust it.
+
+    # If a cached file of the sparse index exists and it has metadata, trust it
     if cache_path.exists():
         try:
             with cache_path.open("rb") as f:
@@ -385,7 +429,7 @@ def load_sparse_index(
             postings[tok].append(len(term_freqs) - 1)
     n_docs = max(1, len(term_freqs))
     avg_dl = float(sum(doc_lens) / max(1, len(doc_lens)))
-    # BM25 idf
+
     idf = {tok: float(np.log((n_docs - d + 0.5) / (d + 0.5) + 1.0)) for tok, d in df.items()}
 
     try:
@@ -408,7 +452,8 @@ def load_sparse_index(
 
     return term_freqs, doc_lens, avg_dl, idf, postings
 
-
+# Since this is cached, this only needs to restart if the app restarts or if I delete the cache
+# This allows for load time of < 10 seconds on Streamlit Community Cloud once the app starts up
 @st.cache_resource(show_spinner=False)
 def bootstrap_runtime(
     index_path: Path,
@@ -417,7 +462,7 @@ def bootstrap_runtime(
     pmid_map_path: Path,
     embed_model_name: str,
 ) -> bool:
-    # Download required artifacts once per process if they are missing.
+
     missing_required = ensure_required_data_files([index_path, chunks_path, index_meta_path])
     ensure_required_data_files([pmid_map_path])
     if missing_required:
@@ -426,7 +471,7 @@ def bootstrap_runtime(
     if not index_path.exists() or not chunks_path.exists():
         raise FileNotFoundError("Index or chunks missing for the quality profile.")
 
-    # Prime all heavy caches once per process.
+
     load_index(index_path)
     load_index_meta(index_meta_path)
     load_chunks(chunks_path)
@@ -446,39 +491,15 @@ def sparse_retrieve(
     postings: Dict[str, List[int]],
     top_k: int,
 ) -> List[Tuple[int, float]]:
-    q_tokens = list(dict.fromkeys(sparse_tokenize(query)))
-    if not q_tokens:
-        return []
-
-
-    candidate_docs = set()
-    for t in q_tokens:
-        for doc_id in postings.get(t, []):
-            candidate_docs.add(doc_id)
-    if not candidate_docs:
-        return []
-
-    # higher k = repeating a word helps more
-    k1 = 1.5
-    # higher b = longer chunks get penalized more. Not a big issue here since abstracts are generally the same length
-    b = 0.75
-    scored: List[Tuple[int, float]] = []
-    for i in candidate_docs:
-        tf = term_freqs[i]
-        dl = max(1, doc_lens[i] if i < len(doc_lens) else 1)
-        score = 0.0
-        for t in q_tokens:
-            f = tf.get(t, 0)
-            if f <= 0:
-                continue
-            idf_t = idf.get(t, 0.0)
-            denom = f + k1 * (1.0 - b + b * (dl / max(1e-9, avg_dl)))
-            score += idf_t * ((f * (k1 + 1.0)) / max(1e-9, denom))
-        if score <= 0.0:
-            continue
-        scored.append((i, float(score)))
-    scored.sort(key=lambda x: x[1], reverse=True)
-    return scored[:top_k]
+    return util_sparse_retrieve(
+        query=query,
+        term_freqs=term_freqs,
+        doc_lens=doc_lens,
+        avg_dl=avg_dl,
+        idf=idf,
+        postings=postings,
+        top_k=top_k,
+    )
 
 
 
@@ -595,12 +616,10 @@ def is_comparative_question(question: str) -> bool:
     q = question.lower()
     if any(token in q for token in (" vs ", " vs. ", " versus ", "compared to", "better than", "worse than")):
         return True
-    # "or" often implies options/comparison in this QA workflow.
     return " or " in q
 
 # Define the prompt for summary length based on the number of tokens desired
 def summary_length_rules(token_budget: int) -> str:
-    # Keep summary short enough to fit the generation cap.
     if token_budget <= 96:
         return "Keep total output <= 70 words. Use 1 short sentence in Conclusion."
     if token_budget <= 160:
@@ -945,7 +964,7 @@ div[role="listbox"] ul li * {
         st.error(str(e))
         return
     
-    # Defint the chat history and prompt the user
+    # Define the chat history and prompt the user
 
     if "chat_history" not in st.session_state:
         st.session_state.chat_history = []
@@ -1029,15 +1048,18 @@ div[role="listbox"] ul li * {
                 dense_score_map = {i: s for i, s in dense_ranked}
                 sparse_score_map = {i: s for i, s in sparse_ranked}
 
+
                 # Get the score for each study, get the URL, and save them to a list
                 contexts = []
                 for i in idxs_list:
                     if i < 0 or i >= len(chunks):
                         continue
+
                     ctx = dict(chunks[i])
                     ctx["dense_score"] = float(dense_score_map.get(i, 0.0))
                     ctx["sparse_score"] = float(sparse_score_map.get(i, 0.0))
                     ctx["score"] = float(fused_score_map.get(i, 0.0))
+ 
                     pmcid_raw = ctx.get("pmcid", "")
                     url = ""
                     resolved = ""
@@ -1065,13 +1087,13 @@ div[role="listbox"] ul li * {
                     key=lambda c: float(c.get("score", 0.0)),
                     reverse=True,
                 )
-                grouped = grouped[:5]
+                grouped = grouped[:10]
 
-                # Format the studies, get the LLM response, time the response, and write the reuslts
+                # Format the studies, get the LLM response, time the response, and write the results
                 answer = format_referenced_studies_llm(
                     contexts=grouped,
                 )
-                full_abstract_context = format_full_abstract_context(grouped, max_studies=5)
+                full_abstract_context = format_full_abstract_context(grouped, max_studies=10)
                 summary_budget = min(num_predict, summary_predict)
                 summary_prompt = format_summary_prompt(
                     question,
