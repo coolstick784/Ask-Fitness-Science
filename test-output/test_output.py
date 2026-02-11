@@ -19,7 +19,7 @@ if str(ROOT) not in sys.path:
 # Import functions and variables from app.py
 from app import (
     GROQ_API_KEY,
-    SPEED_PROFILES,
+    QUALITY_PROFILE,
     SUMMARY_TOKEN_LEVELS,
     TOKEN_LEVELS,
     call_groq,
@@ -106,7 +106,7 @@ def main() -> None:
 
     cwd = ROOT
     # Set the profile, model name, token levels, and various paths
-    profile = SPEED_PROFILES["Quality"]
+    profile = QUALITY_PROFILE
     embed_model_name = profile["embed_model"]
     num_predict = TOKEN_LEVELS["High"]
     summary_predict = SUMMARY_TOKEN_LEVELS["High"]
