@@ -1,4 +1,4 @@
-z"""
+"""
 test_output.py
 Run this script on every push to ensure that function calls work correctly
 """
