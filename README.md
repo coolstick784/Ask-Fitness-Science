@@ -97,35 +97,29 @@ On unanswerable questions, the model did not give confident fabricated answers.
 
 
 
-**Run locally**  
+**Run with Docker**  
 
 ```
 
-git clone https://github.com/coolstick784/Ask-Fitness-Science.git && cd Ask-Fitness-Science  
+git clone https://github.com/coolstick784/Ask-Fitness-Science.git
+cd Ask-Fitness-Science
 
-python -m venv .venv && . .venv/bin/activate  # Windows: .venv.\Scripts.\activate  
+# Build image
+docker build -t ask-fitness-science .
 
-pip install -r requirements.txt  
+# Run default workflow (pipeline + app), expose Streamlit on localhost:8501
+docker run --rm -it -p 8501:8501 `
+  -e GROQ_API_KEY="YOUR_KEY" `
+  -e HF_TOKEN="YOUR_HF_TOKEN" `
+  ask-fitness-science
 
-export GROQ._API._KEY=YOUR._KEY HF._TOKEN=YOUR._HF._TOKEN  # PowerShell: $env:GROQ._API._KEY="..."; $env:HF._TOKEN="..."  
-
-streamlit run app/app.py  
-
-```
-
-**Run locally (rebuild everything)**  
-
-```
-
-git clone https://github.com/coolstick784/Ask-Fitness-Science.git && cd Ask-Fitness-Science  
-
-python -m venv .venv && . .venv/bin/activate  # Windows: .venv.\Scripts.\activate  
-
-pip install -r requirements.txt  
-
-export HF._TOKEN=YOUR._HF._TOKEN  # PowerShell: $env:HF._TOKEN="YOUR._HF._TOKEN"  
-
-python pipeline/run._pipeline.py --publish-to-hf --hf-repo-id <REPO ID HERE>  
+# Optional: publish generated artifacts to Hugging Face during the container run
+docker run --rm -it -p 8501:8501 `
+  -e GROQ_API_KEY="YOUR_KEY" `
+  -e HF_TOKEN="YOUR_HF_TOKEN" `
+  -e RUN_PUBLISH_HF=1 `
+  -e HF_REPO_ID="your-username/your-dataset-repo" `
+  ask-fitness-science
 
 ```
 
