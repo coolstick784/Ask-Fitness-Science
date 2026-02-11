@@ -8,6 +8,7 @@ import json
 import os
 import pickle
 import re
+import sys
 import time
 from pathlib import Path
 from typing import Dict, List, Tuple
@@ -17,12 +18,26 @@ import numpy as np
 import requests
 import streamlit as st
 from sentence_transformers import SentenceTransformer
-from grade_data.io_utils import read_jsonl
-from grade_data.retrieval_utils import (
-    load_index_meta as util_load_index_meta,
-    load_pmid_map as util_load_pmid_map,
-    sparse_retrieve as util_sparse_retrieve,
-)
+
+# Ensure repo root is importable on Streamlit Cloud/app subdir entrypoints.
+ROOT_DIR = Path(__file__).resolve().parent.parent
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
+try:
+    from grade_data.io_utils import read_jsonl
+    from grade_data.retrieval_utils import (
+        load_index_meta as util_load_index_meta,
+        load_pmid_map as util_load_pmid_map,
+        sparse_retrieve as util_sparse_retrieve,
+    )
+except ModuleNotFoundError:
+    from io_utils import read_jsonl
+    from retrieval_utils import (
+        load_index_meta as util_load_index_meta,
+        load_pmid_map as util_load_pmid_map,
+        sparse_retrieve as util_sparse_retrieve,
+    )
 
 
 # Use GROQ for the API for the LLM
