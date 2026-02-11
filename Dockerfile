@@ -28,7 +28,8 @@ RUN python -m pip install --upgrade pip && pip install -r /app/requirements.txt
 
 COPY . /app
 
-RUN chmod +x /app/scripts/run_all_scripts.sh
+RUN find /app/scripts -type f -name "*.sh" -exec sed -i 's/\r$//' {} \; \
+    && chmod +x /app/scripts/run_all_scripts.sh
 
 EXPOSE 8501
 

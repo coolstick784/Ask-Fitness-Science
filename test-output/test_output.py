@@ -39,6 +39,7 @@ from app import (
     load_pmid_map,
     load_sparse_index,
     normalize_summary_sections,
+    ensure_required_data_files,
     retrieve,
     sparse_retrieve,
     strip_redundant_inline_pmc_links,
@@ -114,8 +115,17 @@ def main() -> None:
     chunks_path = cwd / profile["chunks_path"]
     index_meta_path = cwd / profile["index_meta_path"]
     pmid_map_path = cwd / "pipeline-data" / "pmid_to_pmcid.jsonl"
-    if not index_path.exists() or not chunks_path.exists():
-        raise FileNotFoundError(f"Missing required files: {index_path} and/or {chunks_path}")
+
+    # Ensure required artifacts are present locally; missing files are downloaded from HF.
+    missing_required = ensure_required_data_files([index_path, chunks_path, index_meta_path])
+    if missing_required:
+        raise FileNotFoundError(
+            "Missing required files after HF fetch attempt: "
+            + ", ".join(str(p) for p in missing_required)
+        )
+    ensure_required_data_files([pmid_map_path])
+    if not pmid_map_path.exists():
+        raise FileNotFoundError(f"Missing required file after HF fetch attempt: {pmid_map_path}")
 
     # Set the model to the first model if it isn't passed in
     model = args.model.strip()
