@@ -36,7 +36,7 @@ from app import (
     load_embedder,
     load_index,
     load_index_meta,
-    load_pmid_map,
+
     load_sparse_index,
     normalize_summary_sections,
     ensure_required_data_files,
@@ -52,7 +52,7 @@ from app import (
 def resolve_contexts(
     question: str,
     chunks: List[Dict],
-    pmid_map: Dict[str, str],
+
     dense_ranked: List[Tuple[int, float]],
     sparse_ranked: List[Tuple[int, float]],
 ) -> List[Dict]:
@@ -76,10 +76,10 @@ def resolve_contexts(
         ctx["score"] = float(fused_score_map.get(i, 0.0))
         pmcid_raw = str(ctx.get("pmcid", "")).strip()
         resolved = ""
-        if pmcid_raw.startswith("PMC"):
-            resolved = pmcid_raw
-        elif pmcid_raw and pmcid_raw in pmid_map and str(pmid_map[pmcid_raw]).startswith("PMC"):
-            resolved = str(pmid_map[pmcid_raw]).strip()
+
+        resolved = pmcid_raw
+
+
         ctx["pmcid_resolved"] = resolved
         ctx["pmcid"] = resolved or pmcid_raw
         ctx["url"] = canonical_pubmed_url(ctx["pmcid"])
@@ -114,7 +114,7 @@ def main() -> None:
     index_path = cwd / profile["index_path"]
     chunks_path = cwd / profile["chunks_path"]
     index_meta_path = cwd / profile["index_meta_path"]
-    pmid_map_path = cwd / "pipeline-data" / "pmid_to_pmcid.jsonl"
+
 
     # Ensure required artifacts are present locally; missing files are downloaded from HF.
     missing_required = ensure_required_data_files([index_path, chunks_path, index_meta_path])
@@ -123,9 +123,7 @@ def main() -> None:
             "Missing required files after HF fetch attempt: "
             + ", ".join(str(p) for p in missing_required)
         )
-    ensure_required_data_files([pmid_map_path])
-    if not pmid_map_path.exists():
-        raise FileNotFoundError(f"Missing required file after HF fetch attempt: {pmid_map_path}")
+
 
     # Set the model to the first model if it isn't passed in
     model = args.model.strip()
@@ -144,7 +142,7 @@ def main() -> None:
     chunks = load_chunks(chunks_path)
     sparse_tf, sparse_doc_lens, sparse_avg_dl, sparse_idf, sparse_postings = load_sparse_index(chunks_path)
     embedder = load_embedder(embed_model_name)
-    pmid_map = load_pmid_map(pmid_map_path)
+
 
     # Ensure that the model embedder size is valid
     q_emb = embed(embedder, [args.question])
@@ -176,7 +174,7 @@ def main() -> None:
         top_k=sparse_k,
     )
     # Get the combined top 5 of the sparse/dense rankings
-    grouped = resolve_contexts(args.question, chunks, pmid_map, dense_ranked, sparse_ranked)
+    grouped = resolve_contexts(args.question, chunks, dense_ranked, sparse_ranked)
 
     # Format the studies, get the LLM output, and format the response
 
