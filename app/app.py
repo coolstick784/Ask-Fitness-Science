@@ -57,13 +57,13 @@ RESPONSE_LEVEL_MAP = {"Short": "Low", "Medium": "Medium", "Long": "High"}
 
 # Quality-only profile for production use.
 QUALITY_PROFILE = {
-    "model": "groq/compound",
+    "model": "groq/compound-mini",
     "embed_model": "BAAI/bge-base-en-v1.5",
     "top_k": 10,
     "num_predict": 512,
     "summary_predict": 256,
     "context_chars": 900,
-    "max_studies": 5,
+    "max_studies": 10,
     "index_path": str(DATA_DIR / "pmc_faiss.index"),
     "chunks_path": str(DATA_DIR / "pmc_chunks.jsonl"),
     "index_meta_path": str(DATA_DIR / "pmc_index_meta.json"),
@@ -254,7 +254,15 @@ def list_groq_models() -> List[str]:
         items = data.get("data", []) if isinstance(data, dict) else []
         names = [str(m.get("id", "")).strip() for m in items if isinstance(m, dict) and m.get("id")]
 
-        names = sorted(set(n for n in names if n.lower().startswith("groq") or n.lower() == 'llama-3.3-70b-versatile' or n.lower() == 'moonshotai/kimi-k2-instruct-0905'))
+        names = sorted(set(
+            n for n in names
+            if n.lower() != "groq/compound"
+            and (
+                n.lower().startswith("groq")
+                or n.lower() == "llama-3.3-70b-versatile"
+                or n.lower() == "moonshotai/kimi-k2-instruct-0905"
+            )
+        ))
         return names or defaults
     except Exception:
         return defaults
@@ -596,20 +604,38 @@ def call_groq(model: str, prompt: str, num_predict: int) -> str:
         "max_tokens": int(num_predict),
         "stream": False,
     }
-    resp = requests.post(
-        f"{GROQ_API_BASE}/chat/completions",
-        headers={
-            "Authorization": f"Bearer {GROQ_API_KEY}",
-            "Content-Type": "application/json",
-        },
-        json=payload,
-        timeout=180,
-    )
-    if resp.status_code == 404:
-        raise RuntimeError("This Groq model is currently down. Please try another model.")
-    if resp.status_code == 429:
-        raise RuntimeError("Groq rate limit reached (429). Please try another model.")
-    resp.raise_for_status()
+    try:
+        resp = requests.post(
+            f"{GROQ_API_BASE}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {GROQ_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+            timeout=180,
+        )
+        if resp.status_code == 404:
+            raise RuntimeError("This Groq model is currently down. Please try another model.")
+        if resp.status_code == 429:
+            raise RuntimeError("Groq rate limit reached (429). Please try another model.")
+        resp.raise_for_status()
+    except requests.exceptions.HTTPError as e:
+        status = e.response.status_code if e.response is not None else "unknown"
+        detail = ""
+        if e.response is not None:
+            try:
+                body = e.response.json()
+                if isinstance(body, dict):
+                    err = body.get("error", body)
+                    detail = str(err.get("message", err)) if isinstance(err, dict) else str(err)
+                else:
+                    detail = str(body)
+            except ValueError:
+                detail = e.response.text.strip()
+        detail = detail[:500] if detail else "No error details returned."
+        raise RuntimeError(f"Groq request failed ({status}): {detail}") from e
+    except requests.exceptions.RequestException as e:
+        raise RuntimeError(f"Could not reach Groq: {e}") from e
     data = resp.json()
     content = ""
     if isinstance(data, dict):
@@ -828,7 +854,7 @@ def normalize_summary_sections(summary_text: str) -> str:
         parts = re.split(r"(?:\r?\n|;)+", raw)
         items: List[str] = []
         for ln in parts:
-            ln = re.sub(r"^\s*(?:[-•]\s+)", "", ln).strip()  
+            ln = re.sub(r"^\s*(?:[-•]\s+)", "", ln).strip()
             if ln:
                 items.append(ln)
 
@@ -1102,13 +1128,16 @@ div[role="listbox"] ul li * {
                     key=lambda c: float(c.get("score", 0.0)),
                     reverse=True,
                 )
-                grouped = grouped[:10]
+                grouped = grouped[:int(profile["max_studies"])]
 
                 # Format the studies, get the LLM response, time the response, and write the results
                 answer = format_referenced_studies_llm(
                     contexts=grouped,
                 )
-                full_abstract_context = format_full_abstract_context(grouped, max_studies=10)
+                full_abstract_context = format_full_abstract_context(
+                    grouped,
+                    max_studies=int(profile["max_studies"]),
+                )
                 summary_budget = min(num_predict, summary_predict)
                 summary_prompt = format_summary_prompt(
                     question,
