@@ -27,6 +27,7 @@ def main() -> None:
         "pmc_index_meta.json",
     ]
     optional = [
+        "pmc_chunks.sparse.pkl",
         "pmid_to_pmcid.jsonl",
         "pmc_corpus.jsonl",
         "pubmed_resistance_training_abstracts_edirect.jsonl",

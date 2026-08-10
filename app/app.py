@@ -487,7 +487,7 @@ def bootstrap_runtime(
 ) -> bool:
 
     missing_required = ensure_required_data_files([index_path, chunks_path, index_meta_path])
-    ensure_required_data_files([pmid_map_path])
+    ensure_required_data_files([pmid_map_path, chunks_path.with_suffix(".sparse.pkl")])
     if missing_required:
         missing_str = ", ".join(str(p.name) for p in missing_required)
         raise FileNotFoundError(f"Missing required retrieval artifacts: {missing_str}")
