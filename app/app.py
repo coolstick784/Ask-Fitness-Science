@@ -694,7 +694,11 @@ def format_referenced_studies_llm(
 
 
 # This formats the studies into a prompt to ask the LLM
-def format_full_abstract_context(contexts: List[Dict], max_studies: int = 5) -> str:
+def format_full_abstract_context(
+    contexts: List[Dict],
+    max_studies: int = 5,
+    max_chars_per_study: int = 900,
+) -> str:
     if not contexts:
         return "Not in corpus."
     blocks: List[str] = []
@@ -702,6 +706,8 @@ def format_full_abstract_context(contexts: List[Dict], max_studies: int = 5) -> 
         pmid = str(c.get("pmcid", "UNKNOWN")).strip() or "UNKNOWN"
         title = str(c.get("title", "")).strip() or pmid
         abstract = str(c.get("text", "")).strip() or "(No abstract text)"
+        if max_chars_per_study > 0 and len(abstract) > max_chars_per_study:
+            abstract = abstract[:max_chars_per_study].rsplit(" ", 1)[0].rstrip() + "..."
         blocks.append(
             f"Study {idx}\n"
             f"PMID/PMCID: {pmid}\n"
@@ -902,7 +908,7 @@ def main():
     linear-gradient(180deg, #f5f8fc 0%, #eef3f8 100%);
 }
 .block-container {padding-top: 1.2rem;}
-[data-testid="stMainBlockContainer"] {padding-top: 5.6rem;}
+[data-testid="stMainBlockContainer"] {padding-top: 1.2rem;}
 [data-testid="stSidebar"] {background: linear-gradient(180deg, #0f2238 0%, #0c1b2f 100%);}
 [data-testid="stSidebar"] * {color: #eef5ff;}
 [data-testid="stSidebar"] [data-baseweb="select"] > div {
@@ -921,24 +927,16 @@ div[role="listbox"] ul li * {
   border-radius: 14px; padding: 0.45rem 0.65rem;
 }
 .top-header-wrap {
-  position: fixed;
-  top: 5rem;
-  left: 0;
-  right: 0;
-  z-index: 1000;
-  pointer-events: none;
+  display: flex;
+  justify-content: flex-start;
 }
 .top-header-card {
-  max-width: 46rem;
-  margin: 0 auto;
-  padding: 0.6rem 0.9rem;
-  border-radius: 14px;
-  background: rgba(245, 248, 252, 0.9);
-  backdrop-filter: blur(6px);
-  box-shadow: 0 6px 18px rgba(16,36,62,0.08);
+  max-width: 32rem;
+  margin: 0 0 0.75rem;
+  padding: 0.25rem 0;
 }
 .top-header-title {
-  font-size: 2rem;
+  font-size: 1.35rem;
   font-weight: 800;
   letter-spacing: 0.01em;
   color: #10243e;
@@ -949,13 +947,8 @@ div[role="listbox"] ul li * {
   margin-top: 0.2rem;
 }
 @media (max-width: 768px) {
-  [data-testid="stMainBlockContainer"] {padding-top: 6.5rem;}
-  .top-header-wrap {top: 0.35rem;}
   .top-header-card {
-    max-width: calc(100vw - 1rem);
-    margin: 0 0.5rem;
-    padding: 0.55rem 0.65rem;
-    border-radius: 12px;
+    max-width: 100%;
   }
   .top-header-title {font-size: 1.22rem;}
   .top-header-subtitle {font-size: 0.88rem; margin-top: 0.1rem;}
@@ -1146,6 +1139,7 @@ div[role="listbox"] ul li * {
                 full_abstract_context = format_full_abstract_context(
                     grouped,
                     max_studies=int(profile["max_studies"]),
+                    max_chars_per_study=int(profile["context_chars"]),
                 )
                 summary_budget = min(num_predict, summary_predict)
                 summary_prompt = format_summary_prompt(
