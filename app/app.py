@@ -10,6 +10,7 @@ import pickle
 import re
 import sys
 import time
+from array import array
 from pathlib import Path
 from typing import Dict, List, Tuple
 
@@ -25,14 +26,12 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 try:
-    from grade_data.io_utils import read_jsonl
     from grade_data.retrieval_utils import (
         load_index_meta as util_load_index_meta,
         load_pmid_map as util_load_pmid_map,
         sparse_retrieve as util_sparse_retrieve,
     )
 except ModuleNotFoundError:
-    from io_utils import read_jsonl
     from retrieval_utils import (
         load_index_meta as util_load_index_meta,
         load_pmid_map as util_load_pmid_map,
@@ -267,43 +266,53 @@ def list_groq_models() -> List[str]:
     except Exception:
         return defaults
 
-# Load the chunks and cache that data from a .pkl file, otherwise create it
+class JsonlChunkStore:
+    """List-like, disk-backed access to JSONL chunks."""
+
+    def __init__(self, path: Path):
+        self.path = path
+        self.offsets = array("Q")
+        with path.open("rb") as f:
+            while True:
+                offset = f.tell()
+                line = f.readline()
+                if not line:
+                    break
+                if not line.strip():
+                    continue
+                try:
+                    json.loads(line)
+                except Exception:
+                    continue
+                self.offsets.append(offset)
+
+    def __len__(self) -> int:
+        return len(self.offsets)
+
+    def __getitem__(self, index: int) -> Dict:
+        if index < 0:
+            index += len(self.offsets)
+        if index < 0 or index >= len(self.offsets):
+            raise IndexError(index)
+        with self.path.open("rb") as f:
+            f.seek(self.offsets[index])
+            return json.loads(f.readline())
+
+    def __iter__(self):
+        with self.path.open("rb") as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                try:
+                    yield json.loads(line)
+                except Exception:
+                    continue
+
+
+# Keep only compact line offsets in memory and read selected chunks on demand.
 @st.cache_resource(show_spinner=False)
-def load_chunks(chunks_path: Path) -> List[Dict]:
-    cache_path = chunks_path.with_suffix(".chunks.pkl")
-    src_sig = get_source_signature(chunks_path)
-
-    if src_sig and cache_path.exists():
-        try:
-            with cache_path.open("rb") as f:
-                obj = pickle.load(f)
-            if (
-                isinstance(obj, dict)
-                and int(obj.get("source_size", -1)) == int(src_sig[0])
-                and int(obj.get("source_mtime_ns", -1)) == int(src_sig[1])
-                and isinstance(obj.get("chunks"), list)
-            ):
-                return obj["chunks"]
-        except Exception:
-            pass
-
-    chunks: List[Dict] = read_jsonl(chunks_path)
-
-    if src_sig:
-        try:
-            with cache_path.open("wb") as f:
-                pickle.dump(
-                    {
-                        "source_size": int(src_sig[0]),
-                        "source_mtime_ns": int(src_sig[1]),
-                        "chunks": chunks,
-                    },
-                    f,
-                    protocol=pickle.HIGHEST_PROTOCOL,
-                )
-        except Exception:
-            pass
-    return chunks
+def load_chunks(chunks_path: Path) -> JsonlChunkStore:
+    return JsonlChunkStore(chunks_path)
 
 
 
