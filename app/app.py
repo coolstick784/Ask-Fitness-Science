@@ -929,6 +929,7 @@ div[role="listbox"] ul li * {
 .top-header-wrap {
   display: flex;
   justify-content: flex-start;
+  margin-top: 3rem;
 }
 .top-header-card {
   max-width: 32rem;
@@ -936,7 +937,7 @@ div[role="listbox"] ul li * {
   padding: 0.25rem 0;
 }
 .top-header-title {
-  font-size: 1.35rem;
+  font-size: 1.05rem;
   font-weight: 800;
   letter-spacing: 0.01em;
   color: #10243e;
@@ -950,7 +951,7 @@ div[role="listbox"] ul li * {
   .top-header-card {
     max-width: 100%;
   }
-  .top-header-title {font-size: 1.22rem;}
+  .top-header-title {font-size: 0.98rem;}
   .top-header-subtitle {font-size: 0.88rem; margin-top: 0.1rem;}
   .block-container {padding-left: 0.65rem; padding-right: 0.65rem;}
 }
